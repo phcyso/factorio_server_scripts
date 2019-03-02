@@ -1,0 +1,13 @@
+[Unit]
+Description=Start basic factorio server
+
+[Service]
+Type=simple
+EnvironmentFile=/home/factorio/service_environment
+ExecStart=factorio --start-server ${SAVE_PATH} --port $FACTORIO_PORT --server-settings /home/factorio/server-settings.json
+WorkingDirectory=/home/factorio
+User=factorio
+Group=factorio
+
+[Install]
+WantedBy=multi-user.target

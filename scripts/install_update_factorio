@@ -1,0 +1,147 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+main() {
+  POSITIONAL=()
+  while [[ $# -gt 0 ]]
+  do
+  key="$1"
+
+  case $key in
+      --install-path)
+      INSTALL_PATH="${2:-"/opt/factorio"}"
+      shift; shift
+      ;;
+      -s|--save-name)
+      SAVE_NAME="${2:-"default_map.zip"}"
+      shift; shift
+      ;;
+      --port)
+      PORT="${2:-"34197"}"
+      shift; shift
+      ;;
+      -u|--update)
+      MODE="update"
+      shift
+      ;;
+      -i|--install)
+      MODE="install"
+      shift
+      ;;
+      *)
+      POSITIONAL+=("$1")
+      shift
+      ;;
+  esac
+  done
+  set -- "${POSITIONAL[@]}"
+
+case $MODE in
+  install)
+    echo "Installing factorio"
+
+    echo "creating factorio user"
+    useradd --home-dir /home/factorio --create-home "factorio"
+
+    current_version="$(get_current_version)"
+    echo "Installing factorio headless ${current_version}"
+    install_factorio "${current_version}" "$INSTALL_PATH"
+
+    create_service_env_file "${PORT}" "/home/factorio/${SAVE_NAME}"
+
+    systemctl enable factorio
+    echo "Factorio is now installed and available on the command line"
+    echo "default server settings are set in /home/factorio/server-settings.json"
+    echo "Modify any configs you need to in /home/factorio"
+    echo "The default save path is /home/factorio/${SAVE_NAME}"
+    echo "Ensure you put a saved game there or the server will not start"
+    echo "Once your config is set start the server run: "
+    echo "sudo systemctl start factorio"
+    echo ""
+  ;;
+
+  update)
+    echo "Updating factorio"
+
+    echo "Stopping factorio Headless"
+    systemctl stop factorio
+
+    echo "Backing up savefile"
+    backup_savefile "${SAVE_NAME}"
+
+    current_version="$(get_current_version)"
+    echo "Installing factorio headless ${current_version}"
+    install_factorio "${current_version}" "$INSTALL_PATH"
+
+    echo "Starting factorio headless"
+    systemctl start factorio
+  ;;
+
+  backup)
+    echo "Backing up savefile"
+    backup_savefile "${SAVE_NAME}"
+  ;;
+esac
+}
+
+get_current_version() {
+
+  download_url="$(curl -I -Ls -o /dev/null -w "%{url_effective}" https://factorio.com/get-download/latest/headless/linux64)"
+
+  # example filename: factorio_headless_x64_0.17.4.tar.xz
+  regex=".*factorio_headless_x64_([0-9\.]+).tar.xz.*"
+  if [[ $download_url =~ $regex ]]
+  then
+      echo "${BASH_REMATCH[1]}"
+  else
+      echo "Unable to get version, check if the filename format has changed" >&2
+  fi
+}
+
+copy_default_files() {
+  cp "$(basename $0)/factorio.service" /etc/systemd/system/factorio.service
+  cp "$(basename $0)/files/server-settings.json" /home/factorio/server-settings.json
+}
+
+install_factorio() {
+  version="${1}"
+  install_path="${2}"
+
+  # --------------------------------------
+
+  download_url="https://factorio.com/get-download/${version}/headless/linux64"
+  local_file="${install_path}/tmp/factorio_headless_${version}.tar.gz"
+  install_path="${install_path}/factorio_headless_${version}"
+
+  mkdir -p "${install_path}"
+  mkdir -p "${install_path}/tmp"
+
+  mkdir -p "${install_path}/factorio_headless_${version}"
+
+  wget -O ${local_file} ${download_url}
+
+  tar xv -f ${local_file} -C ${install_path}
+
+  chown -R factorio:factorio "${install_path}"
+  ln -s ${install_path}/factorio/bin/x64/factorio /usr/local/bin/factorio
+}
+
+create_service_env_file() {
+  port="$1"
+  save_path="$2"
+  cat <<EOF >> /home/factorio/service_environment
+  FACTORIO_PORT=${port}
+  SAVE_PATH=${save_path}
+EOF
+}
+
+# Takes a filename with extension e.g.  backup_savefile mysave.zip
+backup_savefile() {
+  save_name="${1}"
+  mkdir -p /home/factorio/save_backups
+  cp "/home/factorio/${save_name}" "/home/factorio/save_backups/backup-$(date +"%y%m%d%H%M%S")-${save_name}"
+}
+
+
+main "$@"
